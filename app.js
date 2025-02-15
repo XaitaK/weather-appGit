@@ -2,6 +2,7 @@ class WeatherApp {
     constructor(apiKey) {
         this.apiKey = apiKey;
         this.temperatureChart = null;
+        this.forecast = new Forecast(apiKey);
         this.init();
     }
 
@@ -28,18 +29,17 @@ class WeatherApp {
     }
 
     getCitySuggestions(query) {
-        const apiUrl = `https://api.teleport.org/api/cities/?search=${query}`;
+        const apiUrl = `http://api.openweathermap.org/geo/1.0/direct?q=${query}&limit=5&appid=${this.apiKey}`;
 
         fetch(apiUrl)
             .then(response => response.json())
             .then(data => {
-                let suggestions = data._embedded['city:search-results'];
                 let datalist = document.getElementById('citySuggestions');
                 datalist.innerHTML = '';
 
-                suggestions.forEach(suggestion => {
+                data.forEach(suggestion => {
                     let option = document.createElement('option');
-                    option.value = suggestion.matching_full_name;
+                    option.value = `${suggestion.name}, ${suggestion.country}`;
                     datalist.appendChild(option);
                 });
             })
@@ -58,9 +58,10 @@ class WeatherApp {
                 }
 
                 document.getElementById('weatherCard').classList.remove('hidden');
-                document.getElementById('forecastTable').classList.remove('hidden');
                 document.getElementById('rainMapContainer').classList.remove('hidden');
                 document.getElementById('clockContainer').classList.remove('hidden');
+                document.getElementById('extendedForecast').classList.remove('hidden');
+                document.getElementById('hourlyForecast').classList.remove('hidden');
 
                 document.getElementById('cityName').innerText = `Погода в ${data.name}`;
                 document.getElementById('temperature').innerText = Math.round(data.main.temp);
@@ -69,9 +70,9 @@ class WeatherApp {
                 document.getElementById('humidity').innerText = data.main.humidity;
                 document.getElementById('windSpeed').innerText = Math.round(data.wind.speed);
                 document.getElementById('description').innerText = data.weather[0].description;
-                document.getElementById('weatherIcon').src = `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`;
-
-                forecast.getForecast(city);
+                document.getElementById('weatherIcon').src = `http://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`;
+                this.forecast.getForecast(city);
+                this.getHourlyForecast(city);
                 mapHandler.updateRainMap(data.coord.lat, data.coord.lon);
                 mapHandler.updateWeatherLayers(data.coord.lat, data.coord.lon);
                 this.getUVIndex(data.coord.lat, data.coord.lon);
@@ -81,6 +82,65 @@ class WeatherApp {
                 alert("Ошибка при получении данных");
                 console.error(error);
             });
+    }
+
+    getHourlyForecast(city) {
+        const apiUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${city}&appid=${this.apiKey}&units=metric&lang=ru`;
+
+        fetch(apiUrl)
+            .then(response => response.json())
+            .then(data => {
+                let forecastBody = document.getElementById('forecastBody');
+                forecastBody.innerHTML = '';
+
+                let times = [];
+                let temperatures = [];
+
+                data.list.slice(0, 5).forEach(item => {
+                    let time = new Date(item.dt * 1000).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+                    times.push(time);
+                    temperatures.push(Math.round(item.main.temp));
+
+                    let row = `<tr>
+                        <td>${time}</td>
+                        <td>${Math.round(item.main.temp)}°C</td>
+                        <td>${Math.round(item.wind.speed)} м/с</td>
+                        <td>${item.main.humidity}%</td>
+                    </tr>`;
+                    forecastBody.innerHTML += row;
+                });
+
+                this.updateChart(times, temperatures);
+            })
+            .catch(error => console.error("Ошибка при получении почасового прогноза", error));
+    }
+
+    updateChart(times, temperatures) {
+        if (this.temperatureChart) {
+            this.temperatureChart.destroy();
+        }
+
+        const ctx = document.getElementById("temperatureChart").getContext("2d");
+        this.temperatureChart = new Chart(ctx, {
+            type: "line",
+            data: {
+                labels: times,
+                datasets: [{
+                    label: "Температура (°C)",
+                    data: temperatures,
+                    borderColor: "orange",
+                    backgroundColor: "rgb(240, 11, 11)",
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: { beginAtZero: false }
+                }
+            }
+        });
     }
 
     getUVIndex(lat, lon) {
@@ -127,33 +187,6 @@ class WeatherApp {
             })
             .catch(error => console.error("Ошибка при получении данных загрязненности воздуха", error));
     }
-
-    updateChart(times, temperatures) {
-        if (this.temperatureChart) {
-            this.temperatureChart.destroy();
-        }
-
-        const ctx = document.getElementById("temperatureChart").getContext("2d");
-        this.temperatureChart = new Chart(ctx, {
-            type: "line",
-            data: {
-                labels: times,
-                datasets: [{
-                    label: "Температура (°C)",
-                    data: temperatures,
-                    borderColor: "orange",
-                    backgroundColor: "rgb(240, 11, 11)",
-                    borderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: { beginAtZero: false }
-                }
-            }
-        });
-    }
 }
 
 class Forecast {
@@ -167,30 +200,28 @@ class Forecast {
         fetch(apiUrl)
             .then(response => response.json())
             .then(data => {
-                let forecastBody = document.getElementById('forecastBody');
-                forecastBody.innerHTML = '';
+                let extendedForecast = document.getElementById('extendedForecast');
+                extendedForecast.innerHTML = '';
 
-                let times = [];
-                let temperatures = [];
+                let dailyData = data.list.filter(item => item.dt_txt.includes("12:00:00"));
+                dailyData.forEach(item => {
+                    let date = new Date(item.dt * 1000).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+                    let temp = Math.round(item.main.temp);
+                    let description = item.weather[0].description;
+                    let icon = `http://openweathermap.org/img/wn/${item.weather[0].icon}@2x.png`;
 
-                data.list.slice(0, 5).forEach(item => {
-                    let time = new Date(item.dt * 1000).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-
-                    times.push(time);
-                    temperatures.push(Math.round(item.main.temp));
-
-                    let row = `<tr>
-                        <td>${time}</td>
-                        <td>${Math.round(item.main.temp)}°C</td>
-                        <td>${Math.round(item.wind.speed)} м/с</td>
-                        <td>${item.main.humidity}%</td>
-                    </tr>`;
-                    forecastBody.innerHTML += row;
+                    let forecastItem = `
+                        <div class="forecast-item">
+                            <div class="forecast-date">${date}</div>
+                            <img src="${icon}" alt="${description}" class="forecast-icon">
+                            <div class="forecast-temp">${temp}°C</div>
+                            <div class="forecast-description">${description}</div>
+                        </div>
+                    `;
+                    extendedForecast.innerHTML += forecastItem;
                 });
-
-                weatherApp.updateChart(times, temperatures);
             })
-            .catch(error => console.error(error));
+            .catch(error => console.error("Ошибка при получении расширенного прогноза", error));
     }
 }
 
@@ -198,31 +229,80 @@ class MapHandler {
     constructor(apiKey) {
         this.apiKey = apiKey;
         this.rainMap = null;
+        this.initMap();
+    }
+
+    initMap() {
+        this.rainMap = L.map('rainMap').setView([55.76, 37.64], 10); // Координаты центра карты (Москва)
+        L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(this.rainMap);
+
+        this.rainMap.on('mousemove', (e) => {
+            const coords = [e.latlng.lat, e.latlng.lng];
+            this.showWeatherInfo(coords);
+        });
     }
 
     updateRainMap(lat, lon) {
-        if (!this.rainMap) {
-            this.rainMap = L.map('rainMap').setView([lat, lon], 10);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap'
-            }).addTo(this.rainMap);
-        } else {
-            this.rainMap.setView([lat, lon], 10);
-        }
-
-        L.tileLayer(`https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${this.apiKey}`, {
-            opacity: 0.7
-        }).addTo(this.rainMap);
+        this.rainMap.setView([lat, lon], 10);
     }
 
     updateWeatherLayers(lat, lon) {
-        L.tileLayer(`https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=${this.apiKey}`, {
+        // Пример добавления слоя погоды (осадки)
+        L.tileLayer(`http://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${this.apiKey}`, {
+            opacity: 0.7
+        }).addTo(this.rainMap);
+
+        // Пример добавления слоя температуры
+        L.tileLayer(`http://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=${this.apiKey}`, {
             opacity: 0.5
         }).addTo(this.rainMap);
 
-        L.tileLayer(`https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=${this.apiKey}`, {
+        // Пример добавления слоя ветра
+        L.tileLayer(`http://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=${this.apiKey}`, {
             opacity: 0.5
         }).addTo(this.rainMap);
+    }
+
+    showWeatherInfo(coords) {
+        const [lat, lon] = coords;
+        const apiUrl = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru`;
+
+        fetch(apiUrl)
+            .then(response => response.json())
+            .then(data => {
+                let weatherCondition = '';
+                switch (data.weather[0].main) {
+                    case 'Rain':
+                        weatherCondition = 'Дождь';
+                        break;
+                    case 'Snow':
+                        weatherCondition = 'Снег';
+                        break;
+                    case 'Clear':
+                        weatherCondition = 'Ясно';
+                        break;
+                    case 'Clouds':
+                        weatherCondition = 'Облачно';
+                        break;
+                    default:
+                        weatherCondition = data.weather[0].description;
+                }
+
+                const weatherInfo = `
+                    <div>
+                        <strong>Температура:</strong> ${Math.round(data.main.temp)}°C<br>
+                        <strong>Скорость ветра:</strong> ${Math.round(data.wind.speed)} м/с<br>
+                        <strong>Погодные условия:</strong> ${weatherCondition}<br>
+                    </div>
+                `;
+                const popup = L.popup()
+                    .setLatLng(coords)
+                    .setContent(weatherInfo)
+                    .openOn(this.rainMap);
+            })
+            .catch(error => console.error("Ошибка при получении данных погоды", error));
     }
 }
 
@@ -239,7 +319,6 @@ class ClockUpdater {
 // Инициализация классов
 const apiKey = '0faa2fffbd7850892811bcbdad1eec91';
 const weatherApp = new WeatherApp(apiKey);
-const forecast = new Forecast(apiKey);
 const mapHandler = new MapHandler(apiKey);
 
 // Запуск обновления часов каждую секунду
